@@ -12,10 +12,12 @@ using namespace std;
 #define EXTRA_TIME 105                 // 附加时间片数
 #define FIRST_READ 64                  // 第一次读取操作消耗令牌
 #define MAX_TAG_NUM 16
-int BLOCK_GROUP_SIZE=500;
+int BLOCK_GROUP_SIZE=1024;
 map<int,int> mp;
 vector<int> siz;
 vector<int> fail;
+int jum=0;
+int jum_all=0;
 
 struct ControlModule;
 struct Disk;
@@ -41,7 +43,7 @@ struct Block_Group
 struct Object
 {
     int obj_id;
-    int replica[REP_NUM + 1];
+    int replica[REP_NUM + 1]; //每个副本存在哪个磁盘上
     int *unit[REP_NUM + 1]; // 每个副本中对象块的存储单元索引（1-based）
     int size;
     int tag;
@@ -454,27 +456,7 @@ vector<pair<int, int>> select_block_group(int tag, int size, ControlModule *cm)
         }
         for (auto b : all_block_groups)
         {
-
-            int start = cm->disks[d].block_groups[b].start_pos;
-            int end = cm->disks[d].block_groups[b].end_pos;
-            bool hasContiguous = false;
-            for (int j = start; j <= end - size + 1; j++)
-            {
-                bool contiguous = true;
-                for (int k = 0; k < size; k++)
-                {
-                    if (cm->disks[d].storage[j + k].object_id != 0)
-                    {
-                        contiguous = false;
-                        break;
-                    }
-                }
-                if (contiguous)
-                {
-                    hasContiguous = true;
-                    break;
-                }
-            }
+            bool hasContiguous=hascontinue(cm->disks[d].block_groups,b,size,cm->disks[d].storage);
             if (hasContiguous)
             {
                 if (cm->disks[d].block_groups[b].use_size < min_size)
@@ -512,6 +494,7 @@ void write_action(ControlModule *cm)
     {
         int obj_id, size, tag;
         scanf("%d%d%d", &obj_id, &size, &tag);
+        siz.push_back(size);
         if (obj_id < 1 || obj_id >= MAX_OBJECT_NUM)
             continue;
 
@@ -522,14 +505,10 @@ void write_action(ControlModule *cm)
         obj.last_request_point = 0;
         obj.is_delete = false;
 
-        if (obj.block_read_status)
-            delete[] obj.block_read_status;
         obj.block_read_status = new bool[size + 1]();
         vector<pair<int, int>> rep_block_group = select_block_group(tag, obj.size, cm);
         for (int rep = 1; rep <= REP_NUM; rep++)
         {
-            if (obj.unit[rep])
-                delete[] obj.unit[rep];
             obj.unit[rep] = new int[size + 1];
 
             Disk &disk = cm->disks[rep_block_group[rep - 1].first];
@@ -556,6 +535,7 @@ void write_action(ControlModule *cm)
     }
     fflush(stdout);
 }
+
 void read_action(ControlModule *cm)
 {
     int n_read;
@@ -650,6 +630,7 @@ void read_action(ControlModule *cm)
             // 情况2：当前位置无任务，寻找下一个任务位置
             else
             {
+                jum_all++;
                 int distance = 0, j;
                 for (j = disk.head_position % cm->V + 1; j != disk.head_position; j = (j % cm->V) + 1)
                 {
@@ -668,11 +649,12 @@ void read_action(ControlModule *cm)
                     break;
                 }
                 // 情况2.1：移动距离超过最大令牌数，且令牌未被使用过
-                if (distance >= (cm->G - 64))
+                if (distance >= cm->G)
                 {
                     // if (disk.used_tokens == cm->G) { // 可以执行Jump
                     if (disk.used_tokens == 0)
                     {                                     // 可以执行Jump
+                        jum++;
                         instruction = "j ";               // 输出Jump指令
                         instruction += std::to_string(j); // 将整数j转换为字符串并拼接
                         disk.head_position = j;
@@ -822,7 +804,7 @@ int main(int argc,char *argv[])
     clean(cm);
 
     // 文件路径
-    const char* file_path = "res.txt";
+    const char* file_path = "res1.txt";
 
     // 打开文件，使用 std::ios::app 模式以追加方式写入
     std::ofstream file(file_path, std::ios::app);
@@ -834,8 +816,9 @@ int main(int argc,char *argv[])
     }
 
     // 写入内容
-    file <<"块分配成功"<< mp[1]<<endl;
-    file <<"块分配失败"<< mp[0]<<endl;
+    for(auto it:siz){
+        file<<it<<endl;
+    }
 
     // 关闭文件
     file.close();
