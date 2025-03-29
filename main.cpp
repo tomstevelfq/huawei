@@ -13,6 +13,9 @@ using namespace std;
 #define FIRST_READ 64                  // 第一次读取操作消耗令牌
 #define MAX_TAG_NUM 16
 int BLOCK_GROUP_SIZE=500;
+map<int,int> mp;
+vector<int> siz;
+vector<int> fail;
 
 struct ControlModule;
 struct Disk;
@@ -236,7 +239,7 @@ void ControlModule::updateRequestTimeouts(int request_size)
 bool allocate_storage(Disk &disk, int size, int obj_id, int *units, int V, int from, int to)
 {
     // 遍历所有可能的起始位置
-    for (int start = from; start <= to - size + 1; start++)
+    for (int start = from; start <= to - size + 1; )
     {
         bool allFree = true;
         // 检查从 start 开始连续 size 个块是否都空闲
@@ -245,6 +248,7 @@ bool allocate_storage(Disk &disk, int size, int obj_id, int *units, int V, int f
             if (disk.storage[start + j].object_id != 0)
             {
                 allFree = false;
+                start=start+j+1;
                 break;
             }
         }
@@ -305,21 +309,6 @@ void delete_action(ControlModule *cm)
     }
 
     vector<int> abort_reqs;
-    // for (int i = 1; i <= n_delete; i++)
-    // {
-    //     int id = _id[i];
-    //     int current_id = cm->objects[id].last_request_point;
-    //     while (current_id != 0)
-    //     {
-    //         if (!cm->requests[current_id].is_done)
-    //         {
-    //             abort_reqs.push_back(current_id);
-    //             cm->requests[current_id].is_done = true; // 标记为已取消
-    //         }
-    //         current_id = cm->requests[current_id].prev_id;
-    //     }
-    // }
-
     for (int i = 1; i <= n_delete; i++)
     {
         int id = _id[i];
@@ -349,6 +338,29 @@ void delete_action(ControlModule *cm)
         printf("%d\n", req_id);
     }
     fflush(stdout);
+}
+
+bool hascontinue(vector<Block_Group> &groups,int b,int size,StorageUnit storage[]){
+    int start = groups[b].start_pos;
+    int end = groups[b].end_pos;
+    for (int j = start; j <= end - size + 1; )
+    {
+        bool contiguous = true;
+        for (int k = 0; k < size; k++)
+        {
+            if (storage[j + k].object_id != 0)
+            {
+                contiguous = false;
+                j=j+k+1;
+                break;
+            }
+        }
+        if (contiguous)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 vector<pair<int, int>> select_block_group(int tag, int size, ControlModule *cm)
@@ -381,26 +393,7 @@ vector<pair<int, int>> select_block_group(int tag, int size, ControlModule *cm)
             {
                 continue;
             }
-            int start = cm->disks[d].block_groups[b].start_pos;
-            int end = cm->disks[d].block_groups[b].end_pos;
-            bool hasContiguous = false;
-            for (int j = start; j <= end - size + 1; j++)
-            {
-                bool contiguous = true;
-                for (int k = 0; k < size; k++)
-                {
-                    if (cm->disks[d].storage[j + k].object_id != 0)
-                    {
-                        contiguous = false;
-                        break;
-                    }
-                }
-                if (contiguous)
-                {
-                    hasContiguous = true;
-                    break;
-                }
-            }
+            bool hasContiguous=hascontinue(cm->disks[d].block_groups,b,size,cm->disks[d].storage);
             if (hasContiguous)
             {
                 if (cm->disks[d].block_groups[b].use_size > max_size)
@@ -428,15 +421,24 @@ vector<pair<int, int>> select_block_group(int tag, int size, ControlModule *cm)
     }
     satisfy_block_group.clear();
 
+    if (rep_block_group.size() >= REP_NUM)
+    {
+        mp[1]++;
+    }else{
+        mp[0]++;
+        siz.push_back(size);
+    }
+
     for (auto d : all_disks)
     {
-
         if (rep_block_group.size() >= REP_NUM)
         {
             break;
         }
         int min_b = 0;
         int min_size = BLOCK_GROUP_SIZE;
+        int ma_size=0;
+        int ma_b=0;
         bool repeat = false;
         for (auto &rep_disk_id : rep_block_group)
         {
@@ -501,6 +503,7 @@ vector<pair<int, int>> select_block_group(int tag, int size, ControlModule *cm)
     }
     return rep_block_group;
 }
+
 void write_action(ControlModule *cm)
 {
     int n_write;
@@ -817,5 +820,26 @@ int main(int argc,char *argv[])
     }
 
     clean(cm);
+
+    // 文件路径
+    const char* file_path = "res.txt";
+
+    // 打开文件，使用 std::ios::app 模式以追加方式写入
+    std::ofstream file(file_path, std::ios::app);
+
+    // 检查文件是否成功打开
+    if (!file.is_open()) {
+        std::cerr << "无法打开文件: " << file_path << std::endl;
+        return 1;
+    }
+
+    // 写入内容
+    file <<"块分配成功"<< mp[1]<<endl;
+    file <<"块分配失败"<< mp[0]<<endl;
+
+    // 关闭文件
+    file.close();
+
+    std::cout << "内容已追加到文件: " << file_path << std::endl;
     return 0;
 }
